@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: debug
+  namespace: debug
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: debug
+    spec:
+      containers:
+        - name: debug
+          command:
+            - /bin/sh
+            - '-ec'
+          args:
+            - |-
+              # shutdown envoy on exit.
+              trap 'curl -s -XPOST http://localhost:15000/quitquitquit' EXIT
+
+              # wait for istio.
+              while ! curl -s http://localhost:15021/healthz/ready; do
+                echo "waiting for envoy..."
+                sleep 2
+              done
+
+              # dump routes.
+              curl -s localhost:15000/config_dump?resource=dynamic_route_configs
+
+              # attempt to curl the hosts.
+              for name in example.example api.alpha api.beta; do
+                curl -sw "%{url}=%{response_code}\n" -o /dev/null http://${name}:8080
+              done
+          image: curlimages/curl:7.78.0
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 0

@@ -1,0 +1,69 @@
+#!/bin/bash -eux
+set -o pipefail
+
+V="${1:?which version of istio}"
+
+
+# create cluster.
+if ! kind get clusters | grep --silent .; then
+  kind create cluster \
+    --config kind-config.yaml \
+    --image kindest/node:v1.20.7 \
+    --wait 2m
+fi
+
+
+# generate manifests.
+TMP=$(mktemp -d)
+docker run --rm \
+  -v "$(pwd)/operator.yaml:/operator.yaml:ro" \
+  istio/istioctl:${V} \
+    manifest generate --filename /operator.yaml \
+    > ${TMP}/istio.yaml
+
+# dodgy hack to create istio-system namespace.
+kubectl get ns istio-system -o name | grep --silent . || kubectl create ns istio-system
+
+# deploy istio.
+while ! kubectl apply -f ${TMP}/istio.yaml; do
+  echo "dang..."
+done
+
+kubectl wait deployment/istiod --namespace istio-system --for condition=Available --timeout 2m
+
+
+# deploy junk.
+while ! kubectl apply -f junk/example; do
+  echo "double dang..."
+done
+
+kubectl wait deployment/example --namespace example --for condition=Available --timeout 2m
+
+
+# deploy virtual services.
+while ! kubectl apply -f junk/alpha; do
+  echo "triple dang..."
+done
+
+while ! kubectl apply -f junk/beta; do
+  echo "running out of dangs!"
+done
+
+
+# now time for the magic.
+kubectl delete job debug --namespace debug --ignore-not-found
+while ! kubectl apply -f junk/debug; do
+  echo "oh boy"
+done
+
+
+# lets see what occurs...
+while ! kubectl get pods --namespace debug -lapp=debug -o name | grep --silent .; do
+  echo "waiting for debug pod..."
+  sleep 1
+done
+
+while ! kubectl logs --namespace debug -lapp=debug --follow --all-containers --prefix; do
+  echo "waiting for debug pod logs..."
+  sleep 2
+done
